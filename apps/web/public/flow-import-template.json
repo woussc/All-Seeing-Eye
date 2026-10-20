@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "seriesId": "replace-with-provider-and-series",
+      "label": "",
+      "category": "named-etf",
+      "scope": "",
+      "periodStart": "YYYY-MM-DD",
+      "periodEnd": "YYYY-MM-DD",
+      "publishedAt": "YYYY-MM-DDTHH:MM:SSZ",
+      "netFlowUsd": null,
+      "beginningAumUsd": null,
+      "aumAsOf": null,
+      "expectedConstituents": [],
+      "coveredConstituents": [],
+      "complete": false,
+      "revision": 1,
+      "sourceName": "",
+      "sourceUrl": "https://",
+      "rightsNote": ""
+    }
+  ]
+}

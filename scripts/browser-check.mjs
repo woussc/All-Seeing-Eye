@@ -1,0 +1,14 @@
+import {chromium} from 'playwright';
+import {mkdir} from 'node:fs/promises';
+const browser=await chromium.launch({executablePath:'/workspace/All-Seeing-Eye/scripts/chromium-local.sh',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+page.on('requestfailed',r=>errors.push(`${r.url()} ${r.failure()?.errorText}`));
+await page.goto(process.env.DASHBOARD_URL??'http://127.0.0.1:3001',{waitUntil:'networkidle'});
+await page.waitForTimeout(1500);
+console.log(JSON.stringify({title:await page.title(),errors,chartCount:await page.locator('.chart svg').count(),clock:await page.locator('.time').innerText()},null,2));
+await mkdir('.runtime',{recursive:true});
+await page.screenshot({path:'.runtime/browser-initial.png',fullPage:true});
+await browser.close();
