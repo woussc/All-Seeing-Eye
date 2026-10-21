@@ -1,6 +1,6 @@
 # Freshness upgrade checkpoint
 
-Updated: 21 October 2026. Branch: `feat/freshness-controls`, based on remote `main` at `dfc343d`. The user approved the OpenStock-inspired proposal and requested token-efficient edits with recovery checkpoints. Implementation commit will be recorded after validation.
+Updated: 21 October 2026. Branch: `feat/freshness-controls`, based on remote `main` at `dfc343d`. Validated implementation: `7301e757c2ced9e0a5b0a31495e7624a0013fc50`, committed and pushed to `origin/feat/freshness-controls`. The user approved the OpenStock-inspired proposal and requested token-efficient edits with recovery checkpoints.
 
 ## Read first on resumption
 
@@ -36,4 +36,6 @@ The ledger is persistent local SQLite outside the disposable source cache. **Aut
 
 Next batch: design and test data-branch reservation persistence with local bare Git fixtures (failed push, competing workers, cancellation and restore). Then split quote/history refresh paths and add a data-only publisher. Keep its workflow disabled while external verification is blocked. Only a verified hourly pilot may precede faster US-session collection. The 80% soft reserve, multi-tab election and optional streaming remain future work.
 
-Before leaving this batch: finish formatting/whitespace checks, commit the feature branch, push using native Git if available and record its implementation SHA here. If PR creation is unavailable, provide a branch comparison link without claiming a PR exists.
+Formatting and staged whitespace checks completed. Native Git push succeeded. The branch comparison is https://github.com/woussc/All-Seeing-Eye/compare/main...feat/freshness-controls . No PR or deployed revision is claimed. Main and the daily schedule are unchanged.
+
+Resume from this branch with the local bare-Git reservation fixture design above. Verification commands: `services/market/.venv/bin/pytest -q services/market/tests`, `npm test`, `npm run build`, `npm run build:pages`, and the three `test:pages`, `test:browser`, `test:research-browser` scripts. Browser suites need the corresponding static/local preview running; do not rebuild local output while its Next production server is active. Repeat only checks affected by new edits.
