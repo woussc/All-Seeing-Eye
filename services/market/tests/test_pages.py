@@ -26,7 +26,7 @@ def test_publication_files_digest_missing_data_and_report(tmp_path):
     s = fixture()
     public = tmp_path / 'public'
     r = publish(s, public, NOW)
-    assert sorted(p.name for p in public.iterdir()) == ['monitor.md', 'publication.json', 'reports', 'reports.json', 'snapshot.json']
+    assert sorted(p.name for p in public.iterdir()) == ['feed.json', 'generations', 'monitor.md', 'publication.json', 'reports', 'reports.json', 'snapshot.json']
     assert r['digest'] == hashlib.sha256(encode(s).encode()).hexdigest()
     assert read_reports(public / 'reports')[0] == r
     assert 'Jev: disabled; connection approval pending' in (public / 'monitor.md').read_text()
@@ -74,3 +74,51 @@ def test_corrupt_previous_archive_does_not_replace_publication(tmp_path):
     with pytest.raises(ValueError, match='integrity'):
         publish(fixture('new'), public, NOW)
     assert (public / 'snapshot.json').read_bytes() == before
+
+
+def test_generation_hashes_and_previous_generation_survive_rollout(tmp_path):
+    public = tmp_path / 'public'
+    for i in range(3):
+        publish(fixture(str(i)), public, NOW + timedelta(days=i))
+        manifest = json.loads((public / 'feed.json').read_text())
+        for name in ['snapshot', 'publication']:
+            payload = (public / manifest[name + 'Path']).read_bytes()
+            assert hashlib.sha256(payload).hexdigest() == manifest[name + 'Sha256']
+        assert len(list((public / 'generations').iterdir())) == min(i + 1, 2)
+        assert manifest['generatedAt'] == fixture()['generatedAt']
+
+
+def test_change_tape_preserves_zero_source_status_and_quote_clock():
+    from export_pages import change_tape
+    old = fixture('old'); new = fixture('new')
+    old['assets'][0].update(price=100, status='delayed', asOf='2026-10-19T20:00:00Z')
+    new['assets'][0].update(price=101, status='stale', asOf='2026-10-19T20:01:00Z')
+    changes = change_tape(new, old)
+    assert [c['kind'] for c in changes] == ['health', 'price']
+    assert changes[1]['asOf'] == '2026-10-19T20:01:00Z'
+    new['assets'][0]['asOf'] = '2026-10-19T19:00:00Z'
+    assert [c['kind'] for c in change_tape(new, old)] == ['health']
+    assert change_tape(new, None) == []
+
+
+@pytest.mark.asyncio
+async def test_governed_collector_never_sends_disabled_sources_or_exports_private_database(tmp_path, monkeypatch):
+    import httpx
+    from export_pages import collect
+    original = httpx.AsyncClient
+    wire = []
+    def handler(request):
+        wire.append(request)
+        raise AssertionError('Disabled source reached the transport')
+    def client(**kwargs):
+        return original(**kwargs, transport=httpx.MockTransport(handler), trust_env=False)
+    monkeypatch.setattr(httpx, 'AsyncClient', client)
+    await collect(tmp_path / 'state', ledger_path=tmp_path / 'absent.sqlite3')
+    assert wire == []
+    assert not (tmp_path / 'absent.sqlite3').exists()
+    data = json.loads((tmp_path / 'state/public/publication.json').read_text())
+    assert data['quota']['state'] == 'unavailable' and data['quota']['globalUsed'] is None
+    assert all(not s['enabled'] for s in data['quota']['sources'])
+    snapshot = json.loads((tmp_path / 'state/public/snapshot.json').read_text())
+    assert snapshot['context']['flows'] == {'series': [], 'recordCount': 0}
+    assert all(a['price'] is None for a in snapshot['assets'])

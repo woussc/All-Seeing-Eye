@@ -349,7 +349,9 @@ main {
 .chart-range button.selected {
   color: var(--text);
 }
-.selected:after {
+.view-tabs button.selected:after,
+.pair-tabs button.selected:after,
+.chart-range button.selected:after {
   content: "";
   height: 1px;
   position: absolute;
@@ -357,6 +359,7 @@ main {
   left: 0;
   right: 0;
   background: var(--accent);
+  pointer-events: none;
 }
 .observation {
   display: flex;
@@ -2108,6 +2111,77 @@ kbd {
 }
 
 /* Evidence workspace: reuse the terminal's quiet surfaces and data hierarchy. */
+.feed-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 0 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.feed-strip strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.feed-evidence {
+  grid-column: 1 / -1;
+  padding: 20px;
+}
+.feed-evidence .panel-heading {
+  padding: 0 0 16px;
+}
+.feed-evidence .context-footnote {
+  padding: 8px 0;
+  margin: 0;
+  border: 0;
+}
+.feed-evidence .context-empty {
+  padding: 16px 0 0;
+  margin: 0;
+}
+.feed-evidence h3 {
+  margin: 24px 0 8px;
+  font-size: 14px;
+}
+.budget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.budget-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.budget-source strong {
+  text-transform: capitalize;
+  font-weight: 500;
+}
+.feed-changes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.feed-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.feed-changes strong {
+  font-weight: 500;
+}
+.feed-changes small {
+  color: var(--muted);
+}
 .context-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

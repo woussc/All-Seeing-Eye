@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "globalDailyCap": 500,
+  "sources": {
+    "yahoo": { "enabled": false, "dailyCap": 360 },
+    "coinbase": { "enabled": false, "dailyCap": 150 },
+    "treasury": { "enabled": false, "dailyCap": 8 },
+    "bls": { "enabled": false, "dailyCap": 2 },
+    "fred": { "enabled": false, "dailyCap": 4 },
+    "cftc": { "enabled": false, "dailyCap": 2 }
+  }
+}

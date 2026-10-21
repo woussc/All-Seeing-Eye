@@ -18,15 +18,23 @@ export function researchPath(path: string, mutation = false) {
 }
 
 /** Publication age is separate from observation age; never upgrade a source. */
-export function publicationOverdue(snapshot: Snapshot, now = Date.now()) {
-  return now - Date.parse(snapshot.generatedAt) > 36 * 60 * 60 * 1000;
+export function publicationOverdue(
+  snapshot: Snapshot,
+  now = Date.now(),
+  overdueAfterSeconds = 129600,
+) {
+  return now - Date.parse(snapshot.generatedAt) > overdueAfterSeconds * 1000;
 }
 
 export function agePublishedSnapshot(
   snapshot: Snapshot,
   now = Date.now(),
+  overdueAfterSeconds = 129600,
 ): Snapshot {
-  if (snapshot.mode !== "connected" || !publicationOverdue(snapshot, now))
+  if (
+    snapshot.mode !== "connected" ||
+    !publicationOverdue(snapshot, now, overdueAfterSeconds)
+  )
     return snapshot;
   return {
     ...snapshot,

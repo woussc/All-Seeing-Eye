@@ -56,3 +56,18 @@ test("overdue publications suppress analytical watches without inventing transit
   assert.equal(aged.context?.alerts[0].transitions, 1);
   assert.equal(s.context?.alerts[0].state, "active");
 });
+
+test("a shorter verified publication cadence cannot inherit the legacy 36-hour grace", () => {
+  const s: Snapshot = { ...structuredClone(demo), mode: "connected" };
+  s.assets.forEach((a) => {
+    a.status = "delayed";
+  });
+  const now = Date.parse(s.generatedAt) + 2 * 3600000;
+  assert.equal(publicationOverdue(s, now), false);
+  assert.equal(publicationOverdue(s, now, 5400), true);
+  assert.ok(
+    agePublishedSnapshot(s, now, 5400).assets.every(
+      (a) => a.status === "stale",
+    ),
+  );
+});

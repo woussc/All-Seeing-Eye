@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
-import { isSnapshot } from "../apps/web/lib/market";
+import { isSnapshot, technicalsFor, type View } from "../apps/web/lib/market";
 import type { FlowSeries } from "../contracts/context";
 
 async function run() {
@@ -51,14 +51,29 @@ async function run() {
       .click();
     await page.getByRole("dialog").waitFor();
     assert.match(await page.getByRole("dialog").innerText(), /Trend evidence/);
-    assert.match(
-      await page.getByRole("dialog").innerText(),
-      /EMA200 \/ 5-bar move/,
-    );
-    assert.match(await page.getByRole("dialog").innerText(), /ATR14 \/ close/);
+    const spy = real.assets.find((asset) => asset.symbol === "SPY")!;
+    const checkTechnicalView = async (view: View) => {
+      const text = await page.getByRole("dialog").innerText();
+      if (technicalsFor(spy, view)) {
+        assert.match(text, /EMA200 \/ 5-bar move/);
+        assert.match(text, /ATR14 \/ close/);
+        await page
+          .getByText("Confirmed price structure:", { exact: false })
+          .click();
+      } else {
+        assert.match(text, /Detailed trend evidence is unavailable/);
+        assert.doesNotMatch(text, /EMA200 \/ 5-bar move/);
+      }
+    };
+    await checkTechnicalView("close");
+    await page.keyboard.press("Escape");
     await page
-      .getByText("Confirmed price structure:", { exact: false })
+      .getByRole("button", { name: "Latest quotes", exact: true })
       .click();
+    await page
+      .getByRole("button", { name: "Inspect SPY", exact: true })
+      .click();
+    await checkTechnicalView("latest");
     await page.screenshot({
       path: ".runtime/technical-evidence-desktop.png",
       fullPage: true,
@@ -76,8 +91,11 @@ async function run() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.keyboard.press("Escape");
     checks.push(
-      "Dated slopes, structure, longer returns and normalized ATR fit the evidence drawer",
+      "Technical evidence respects each selected cutoff; retained latest-view evidence fits desktop and phone",
     );
+    await page
+      .getByRole("button", { name: "Common close", exact: true })
+      .click();
     await page.screenshot({
       path: ".runtime/connected-overview.png",
       fullPage: true,

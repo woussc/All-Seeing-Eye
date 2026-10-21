@@ -17,6 +17,8 @@ The five screens are Overview, Fund flows, Research, Journal and Sources. The we
 
 Public Yahoo Finance, Coinbase Exchange and US Treasury observations can be delayed, unavailable or revised. Failed sources retain cached observations marked stale, or unavailable values without cache. Explicit `?demo=1` mode contains synthetic data and is never an outage fallback.
 
+The freshness upgrade adds hash-checked publication manifests, visible-tab polling, a shared manual/automatic cooldown, captured collection budgets and a record-based change tape. **Source policies remain disabled pending verification, and a missing ledger fails closed.** No faster collection schedule is active. See [collection controls](docs/collection-controls.md) and the [upgrade edit plan](docs/upgrade-edit-plan.md).
+
 ## Build the static site
 
 Requirements: Node.js 24, Python 3.12 and uv. From the repository root:

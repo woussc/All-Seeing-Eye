@@ -11,12 +11,13 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from calculations import iso
+from calculations import iso, parse_time
 from macro import MacroService
 from models import Snapshot
 from providers import PublicProviders
 from research import ResearchStore, briefing, encode
 from service import MarketService, Store
+from governor import GovernedRequests, Policy, QuotaLedger
 
 REPORT_FIELDS = ('id', 'kind', 'reportDate', 'createdAt', 'snapshotId', 'digest', 'title', 'previousId')
 MAX_REPORTS = 30
@@ -40,14 +41,42 @@ def read_reports(directory):
     return sorted(result, key=lambda r: (r['createdAt'], r['id']), reverse=True)
 
 
-def publish(snapshot, public_dir, now=None):
+def change_tape(snapshot, previous):
+    """Differences in recorded observations, never inferred flows or trade signals."""
+    if previous is None:
+        return []
+    changes = []
+    old_assets = {a['symbol']: a for a in previous['assets']}
+    for asset in snapshot['assets']:
+        old = old_assets.get(asset['symbol'])
+        if not old:
+            continue
+        if asset['status'] != old['status']:
+            changes.append({'kind': 'health', 'label': asset['symbol'] + ' source status',
+                'before': old['status'], 'after': asset['status'], 'asOf': snapshot['generatedAt']})
+        if (old['price'] is not None and asset['price'] is not None and old['price'] != asset['price']
+            and asset['asOf'] and old['asOf'] and parse_time(asset['asOf']) >= parse_time(old['asOf'])):
+            changes.append({'kind': 'price', 'label': asset['symbol'] + ' last quote (USD)',
+                'before': str(old['price']), 'after': str(asset['price']), 'asOf': asset['asOf']})
+    old_macro = {s['id']: s for s in (previous.get('context') or {}).get('macro', {}).get('series', [])}
+    for series in (snapshot.get('context') or {}).get('macro', {}).get('series', []):
+        old = old_macro.get(series['id'])
+        if old and series['value'] is not None and (series['value'], series['observedOn']) != (old['value'], old['observedOn']):
+            change_label = 'revised observation' if series['observedOn'] == old['observedOn'] else 'new observation'
+            changes.append({'kind': 'macro', 'label': series['label'] + ' · ' + series['unit'] + ' · ' + change_label,
+                'before': str(old['value']) + ' / ' + str(old['observedOn']),
+                'after': str(series['value']) + ' / ' + str(series['observedOn']), 'asOf': snapshot['generatedAt']})
+    return changes[:30]
+
+
+def publish(snapshot, public_dir, now=None, quota=None):
     """Stage a complete generation before replacing the previous publication."""
     now = now or datetime.now(timezone.utc)
     Snapshot.model_validate(snapshot)
     if snapshot['mode'] != 'connected' or len(snapshot['assets']) != 12:
         raise ValueError('Only twelve-reference source snapshots can be published')
     # Public release never includes manually imported data or acknowledgment state.
-    if snapshot.get('context', {}).get('flows') != {'series': [], 'recordCount': 0}:
+    if (snapshot.get('context') or {}).get('flows') != {'series': [], 'recordCount': 0}:
         raise ValueError('Public export does not accept private flow imports')
     reports = read_reports(public_dir / 'reports')
     digest = hashlib.sha256(encode(snapshot).encode()).hexdigest()
@@ -74,13 +103,36 @@ def publish(snapshot, public_dir, now=None):
     for item in reports:
         (staging / 'reports' / (item['id'] + '.json')).write_text(encode(item))
     (staging / 'monitor.md').write_text(report['briefing']['monitorMarkdown'])
-    (staging / 'publication.json').write_text(encode({
+    publication = {
+        'version': 2, 'cadenceSeconds': 86400, 'overdueAfterSeconds': 129600,
         'generatedAt': snapshot['generatedAt'], 'schedule': '17 0 * * * UTC',
         'expectedCadence': 'Daily around 08:17 Asia/Singapore; GitHub may delay or skip scheduled jobs.',
         'availableAssets': sum(a['price'] is not None for a in snapshot['assets']),
         'freshAssetsAtCapture': sum(a['status'] == 'delayed' for a in snapshot['assets']),
         'reportCount': len(reports), 'retentionLimit': MAX_REPORTS,
-    }))
+        'quota': quota, 'changes': change_tape(snapshot, previous['snapshot'] if previous else None),
+    }
+    snapshot_bytes = encode(snapshot).encode()
+    publication_bytes = encode(publication).encode()
+    generation = hashlib.sha256(snapshot_bytes + publication_bytes).hexdigest()
+    folder = staging / 'generations' / generation
+    folder.mkdir(parents=True)
+    (folder / 'snapshot.json').write_bytes(snapshot_bytes)
+    (folder / 'publication.json').write_bytes(publication_bytes)
+    (staging / 'publication.json').write_bytes(publication_bytes)
+    manifest = {'version': 1, 'generation': generation, 'generatedAt': snapshot['generatedAt'],
+        'snapshotPath': f'generations/{generation}/snapshot.json',
+        'snapshotSha256': hashlib.sha256(snapshot_bytes).hexdigest(),
+        'publicationPath': f'generations/{generation}/publication.json',
+        'publicationSha256': hashlib.sha256(publication_bytes).hexdigest(), 'pollAfterSeconds': 60}
+    old_manifest = public_dir / 'feed.json'
+    if old_manifest.exists():
+        old_generation = json.loads(old_manifest.read_text())['generation']
+        if not re.fullmatch('[a-f0-9]{64}', old_generation):
+            raise ValueError('Invalid prior generation')
+        if old_generation != generation:
+            shutil.copytree(public_dir / 'generations' / old_generation, staging / 'generations' / old_generation)
+    (staging / 'feed.json').write_text(encode(manifest))
     backup = public_dir.with_name(public_dir.name + '-previous')
     if backup.exists():
         shutil.rmtree(backup)
@@ -97,13 +149,16 @@ def publish(snapshot, public_dir, now=None):
     return report
 
 
-async def collect(state_dir):
+async def collect(state_dir, policy_path=None, ledger_path=None):
     state_dir.mkdir(parents=True, exist_ok=True)
     db = state_dir / 'sources.sqlite3'
     store = Store(db)
     research = ResearchStore(db)
+    policy = Policy.load(policy_path or Path(__file__).resolve().parents[2] / 'config/source-policies.json')
+    ledger = QuotaLedger(ledger_path or state_dir.parent / 'pages-quota.sqlite3', policy)
     async with httpx.AsyncClient(headers={'User-Agent': 'AllSeeingEyePublicMonitor/0.1'}, timeout=5,
-                                 limits=httpx.Limits(max_connections=16)) as client:
+                                 limits=httpx.Limits(max_connections=16),
+                                 event_hooks=GovernedRequests(ledger).hooks) as client:
         market, macro = await asyncio.gather(
             MarketService(store, PublicProviders(client)).snapshot(),
             MacroService(db, client).snapshot())
@@ -117,7 +172,7 @@ async def collect(state_dir):
     # No report database grows in the cache. Public JSON retains at most 30 captures.
     with store.connection() as conn:
         conn.execute('DELETE FROM snapshots WHERE id != ?', (snapshot['id'],))
-    publish(snapshot, state_dir / 'public')
+    publish(snapshot, state_dir / 'public', quota=ledger.status())
     print(json.dumps({'snapshotId': snapshot['id'], 'generatedAt': snapshot['generatedAt'],
                       'available': sum(a['price'] is not None for a in snapshot['assets']),
                       'stale': sum(a['status'] == 'stale' for a in snapshot['assets'])}))
@@ -126,5 +181,13 @@ async def collect(state_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', type=Path, default=Path('.runtime/pages-state'))
+    parser.add_argument('--policy', type=Path)
+    parser.add_argument('--ledger', type=Path)
+    parser.add_argument('--initialize-ledger', action='store_true', help='Create a new ledger only; never enables sources')
     args = parser.parse_args()
-    asyncio.run(collect(args.state_dir))
+    if args.initialize_ledger:
+        policy = Policy.load(args.policy or Path(__file__).resolve().parents[2] / 'config/source-policies.json')
+        QuotaLedger(args.ledger or args.state_dir.parent / 'pages-quota.sqlite3', policy).initialize()
+        print('Quota ledger initialized; source policies remain unchanged.')
+    else:
+        asyncio.run(collect(args.state_dir, args.policy, args.ledger))

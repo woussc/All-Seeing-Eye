@@ -108,6 +108,9 @@ def parse_treasury_xml(payload, kind, year, today):
 
 
 def _error(exc):
+    from governor import RequestDenied
+    if isinstance(exc, RequestDenied):
+        return str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
         return f'Treasury HTTP {exc.response.status_code}'
     if isinstance(exc, (httpx.TimeoutException, TimeoutError)):

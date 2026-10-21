@@ -62,6 +62,9 @@ class Store:
 def safe_error(exc):
     # Avoid reflecting provider URLs, credentials or request internals into the UI.
     import httpx
+    from governor import RequestDenied
+    if isinstance(exc, RequestDenied):
+        return str(exc)
     if isinstance(exc,httpx.HTTPStatusError):
         return f'Provider HTTP {exc.response.status_code}'
     if isinstance(exc,(httpx.TimeoutException, TimeoutError)):

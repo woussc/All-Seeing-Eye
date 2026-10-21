@@ -25,6 +25,9 @@ import {
   X,
 } from "lucide-react";
 import { demo } from "@/lib/demo";
+import type { Publication } from "../../../contracts/publication";
+import { fetchPublication, RefreshGate } from "@/lib/publication";
+import { FeedEvidence, FreshnessStrip } from "./feed-evidence";
 import {
   IS_PAGES,
   agePublishedSnapshot,
@@ -105,6 +108,8 @@ export function Monitor() {
   const [screen, setScreen] = useState<Screen>("overview");
   const [rawSnapshot, setSnapshot] = useState<Snapshot>(demo);
   const [publicationLoaded, setPublicationLoaded] = useState(!IS_PAGES);
+  const [publication, setPublication] = useState<Publication | null>(null);
+  const [online, setOnline] = useState(true);
   const [view, setView] = useState<View>("close");
   const [filter, setFilter] = useState<AssetGroup | "All assets">("All assets");
   const [search, setSearch] = useState("");
@@ -122,8 +127,30 @@ export function Monitor() {
   );
   const [range, setRange] = useState<20 | 65>(65);
   const [now, setNow] = useState<string>("");
+  const activePublication =
+    !archived && publication?.generatedAt === rawSnapshot.generatedAt
+      ? publication
+      : null;
   const snapshot =
-    IS_PAGES && !archived ? agePublishedSnapshot(rawSnapshot) : rawSnapshot;
+    IS_PAGES && !archived
+      ? agePublishedSnapshot(
+          rawSnapshot,
+          Date.now(),
+          activePublication?.overdueAfterSeconds,
+        )
+      : rawSnapshot;
+  const overdue = publicationOverdue(
+    snapshot,
+    Date.now(),
+    activePublication?.overdueAfterSeconds,
+  );
+  const refreshGate = useRef(new RefreshGate());
+  const latestPublished = useRef<{
+    generation: string;
+    generatedAt: string;
+    snapshot: Snapshot;
+    publication: Publication;
+  } | null>(null);
   const searchEl = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const refreshController = useRef<AbortController | null>(null);
@@ -211,14 +238,33 @@ export function Monitor() {
     const id = setTimeout(() => setNotice(""), 4500);
     return () => clearTimeout(id);
   }, [notice]);
-  function cancelRefresh() {
+  function cancelRefresh(clearGate = true) {
     refreshVersion.current++;
     refreshController.current?.abort();
     refreshController.current = null;
+    if (clearGate) refreshGate.current.cancel();
     setLoading(false);
   }
   async function connect(showNotice = true) {
-    cancelRefresh();
+    if (
+      IS_PAGES &&
+      !refreshGate.current.begin(
+        Date.now(),
+        document.visibilityState === "visible",
+        navigator.onLine,
+      )
+    ) {
+      if (showNotice)
+        setNotice(
+          navigator.onLine
+            ? "The next published-data check is available after the shared cooldown."
+            : "You're offline. The retained view is unchanged.",
+        );
+      if (!publicationLoaded && !navigator.onLine)
+        setError("You're offline. Reconnect to load published data.");
+      return;
+    }
+    cancelRefresh(false);
     const version = refreshVersion.current;
     const controller = new AbortController();
     refreshController.current = controller;
@@ -226,19 +272,39 @@ export function Monitor() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(marketPath(), {
-        cache: "no-store",
-        signal: AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(30000),
-        ]),
-      });
-      const data = await res.json();
-      if (!res.ok || !isSnapshot(data))
-        throw Error(data.error ?? "Unable to validate the market snapshot.");
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(30000),
+      ]);
+      let data: Snapshot;
+      if (IS_PAGES) {
+        const result = await fetchPublication(latestPublished.current, signal);
+        if (result.snapshot && result.publication)
+          latestPublished.current = {
+            generation: result.manifest.generation,
+            generatedAt: result.manifest.generatedAt,
+            snapshot: result.snapshot,
+            publication: result.publication,
+          };
+        if (!latestPublished.current)
+          throw Error("Published data is unavailable.");
+        data = latestPublished.current.snapshot;
+        if (version !== refreshVersion.current) return;
+        setPublication(latestPublished.current.publication);
+      } else {
+        const res = await fetch(marketPath(), {
+          cache: "no-store",
+          signal,
+        });
+        const raw = await res.json();
+        if (!res.ok || !isSnapshot(raw))
+          throw Error(raw.error ?? "Unable to validate the market snapshot.");
+        data = raw;
+      }
       if (version !== refreshVersion.current) return;
       setSnapshot(data);
       setPublicationLoaded(true);
+      if (IS_PAGES) refreshGate.current.finish(Date.now(), true);
       if (showNotice)
         setNotice(
           IS_PAGES
@@ -246,8 +312,10 @@ export function Monitor() {
             : "Source check complete. Review coverage and timestamps.",
         );
     } catch (e) {
-      if (version === refreshVersion.current)
+      if (version === refreshVersion.current) {
+        if (IS_PAGES) refreshGate.current.finish(Date.now(), false);
         setError(e instanceof Error ? e.message : "Source refresh failed.");
+      }
     } finally {
       if (version === refreshVersion.current) {
         refreshController.current = null;
@@ -264,15 +332,32 @@ export function Monitor() {
       )
     )
       setScreen(target as Screen);
+    setOnline(navigator.onLine);
     if (params.get("demo") !== "1") void connect(false);
     else setPublicationLoaded(true);
   }, []);
   useEffect(() => {
     if (snapshot.mode !== "connected" || archived) return;
-    const id = setInterval(() => {
-      void connect(false);
-    }, 60000);
-    return () => clearInterval(id);
+    const check = () => {
+      setOnline(navigator.onLine);
+      if (document.visibilityState === "visible" && navigator.onLine)
+        void connect(false);
+    };
+    const visibility = () => {
+      setOnline(navigator.onLine);
+      if (document.visibilityState === "visible" && navigator.onLine) check();
+    };
+    const offline = () => setOnline(false);
+    const id = setInterval(check, 60000);
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("online", check);
+    window.addEventListener("offline", offline);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("online", check);
+      window.removeEventListener("offline", offline);
+    };
   }, [snapshot.mode, archived]);
   const rows = useMemo(() => {
     const list = snapshot.assets.filter(
@@ -591,20 +676,28 @@ export function Monitor() {
           )}
           {IS_PAGES && !isDemo && (
             <div
-              className={
-                publicationOverdue(snapshot) ? "error-banner" : "dataset-notice"
-              }
+              className={overdue ? "error-banner" : "dataset-notice"}
               role="status"
             >
               {archived
                 ? "Frozen report"
-                : publicationOverdue(snapshot)
+                : overdue
                   ? "Update overdue"
-                  : "Daily publication"}
-              {" · "}Collected {stamp(snapshot.generatedAt)} SGT. Scheduled
-              around 08:17 SGT; timing can vary. Quotes and watch states
-              describe that capture. Reload checks for a published update.
+                  : "Published capture"}
+              {" · "}Collected {stamp(snapshot.generatedAt)} SGT.{" "}
+              {activePublication?.expectedCadence ??
+                "Historical capture; publication schedule unavailable."}{" "}
+              Quotes and watch states describe that capture. Checks retrieve a
+              published update.
             </div>
+          )}
+          {IS_PAGES && !isDemo && !archived && (
+            <FreshnessStrip
+              snapshot={snapshot}
+              publication={activePublication}
+              online={online}
+              nextCheck={refreshGate.current.nextAt()}
+            />
           )}
           {error && (
             <div role="alert" className="error-banner">
@@ -1009,6 +1102,9 @@ export function Monitor() {
           )}
           {screen === "sources" && (
             <div className="source-layout">
+              {activePublication && (
+                <FeedEvidence publication={activePublication} />
+              )}
               <section className="panel">
                 <div className="panel-heading">
                   <div>

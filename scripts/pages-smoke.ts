@@ -60,6 +60,7 @@ async function run() {
       viewport: { width: 1440, height: 1000 },
       acceptDownloads: true,
     });
+    await context.tracing.start({ screenshots: true, snapshots: true });
     const page = await context.newPage();
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("request", (r) => requests.push(r.url()));
@@ -74,6 +75,24 @@ async function run() {
     );
     checks.push(
       "Project-subpath static HTML, scripts, fonts and twelve-reference snapshot load",
+    );
+    const manifestCalls = () =>
+      requests.filter((url) => url.endsWith("/data/feed.json")).length;
+    const initialChecks = manifestCalls();
+    for (let i = 0; i < 3; i++)
+      await page
+        .getByRole("button", { name: "Check published update", exact: true })
+        .click();
+    assert.equal(manifestCalls(), initialChecks);
+    await page.getByRole("button", { name: "Sources", exact: true }).click();
+    await page
+      .getByRole("heading", { name: "Collection budget", exact: true })
+      .waitFor();
+    assert.equal(await page.locator(".budget-source").count(), 6);
+    assert.match(await page.locator(".feed-evidence").innerText(), /Unknown/);
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    checks.push(
+      "Manual refresh shares a cooldown; captured source budgets preserve unknown accounting",
     );
     await page.getByRole("textbox", { name: "Find an asset" }).fill("spy");
     assert.equal(await page.locator(".asset-table tbody tr").count(), 1);
@@ -110,9 +129,25 @@ async function run() {
       0,
     );
     await page.locator(".report-row").first().click();
-    const downloadEvent = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export monitor report" }).click();
-    const download = await downloadEvent;
+    const exportButton = page.getByRole("button", {
+      name: "Export monitor report",
+      exact: true,
+    });
+    await exportButton.waitFor({ state: "visible" });
+    let download;
+    try {
+      [download] = await Promise.all([
+        page.waitForEvent("download"),
+        exportButton.click({ timeout: 10000 }),
+      ]);
+    } catch (error) {
+      await page.screenshot({
+        path: ".runtime/pages-export-failure.png",
+        fullPage: true,
+      });
+      await context.tracing.stop({ path: ".runtime/pages-export-failure.zip" });
+      throw error;
+    }
     const markdown = await readFile((await download.path())!, "utf8");
     assert.match(markdown, /Jev: disabled; connection approval pending/);
     assert.match(markdown, /Common price cutoff/);
@@ -155,7 +190,7 @@ async function run() {
       "Overdue publication is explicit and cannot imply current trend confirmation",
     );
     await page.clock.resume();
-    await page.route("**/data/snapshot.json", (route) =>
+    await page.route("**/generations/*/snapshot.json", (route) =>
       route.fulfill({ status: 503, body: "Unavailable" }),
     );
     await page.reload({ waitUntil: "networkidle" });
@@ -166,7 +201,7 @@ async function run() {
     checks.push(
       "Initial data failure never substitutes a synthetic market dashboard",
     );
-    await page.unroute("**/data/snapshot.json");
+    await page.unroute("**/generations/*/snapshot.json");
     await page.goto(base + "?demo=1", { waitUntil: "networkidle" });
     await page.locator(".chart svg").waitFor();
     await page
@@ -175,6 +210,99 @@ async function run() {
     checks.push(
       "Chart library loads under the project subpath in explicitly selected demo mode",
     );
+    const pollContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+    });
+    const pollPage = await pollContext.newPage();
+    const pollRequests: string[] = [];
+    pollPage.on("request", (r) => {
+      requests.push(r.url());
+      pollRequests.push(r.url());
+    });
+    pollPage.on("pageerror", (e) => errors.push(e.message));
+    await pollPage.clock.install({ time: new Date() });
+    await pollPage.goto(base, { waitUntil: "networkidle" });
+    await pollPage.getByText("Published snapshot", { exact: true }).waitFor();
+    const pollCount = () =>
+      pollRequests.filter((url) => url.endsWith("/data/feed.json")).length;
+    const payloadCount = () =>
+      pollRequests.filter((url) => url.includes("/generations/")).length;
+    const initialPolls = pollCount(),
+      initialPayloads = payloadCount();
+    await pollPage.evaluate(
+      'Object.defineProperty(document, "visibilityState", { configurable: true, get() { return "hidden"; } })',
+    );
+    await pollPage.clock.fastForward(61000);
+    assert.equal(pollCount(), initialPolls);
+    await Promise.all([
+      pollPage.waitForResponse((r) => r.url().endsWith("/data/feed.json")),
+      pollPage.evaluate(
+        'Object.defineProperty(document, "visibilityState", { configurable: true, get() { return "visible"; } }); document.dispatchEvent(new Event("visibilitychange"));',
+      ),
+    ]);
+    await pollPage.waitForLoadState("networkidle");
+    assert.equal(pollCount(), initialPolls + 1);
+    assert.equal(payloadCount(), initialPayloads);
+    checks.push(
+      "Hidden tabs spend no checks; visibility resumes manifest-only polling for unchanged data",
+    );
+    await pollContext.setOffline(true);
+    await pollPage
+      .getByText("Offline · retained view", { exact: true })
+      .waitFor();
+    await pollPage.clock.fastForward(61000);
+    assert.equal(pollCount(), initialPolls + 1);
+    await Promise.all([
+      pollPage.waitForResponse((r) => r.url().endsWith("/data/feed.json")),
+      pollContext.setOffline(false),
+    ]);
+    await pollPage.waitForLoadState("networkidle");
+    assert.equal(pollCount(), initialPolls + 2);
+    checks.push(
+      "Offline viewing preserves evidence and resumes within the same refresh budget",
+    );
+    const originalManifest = JSON.parse(
+      await readFile(path.join(root, "data/feed.json"), "utf8"),
+    );
+    const originalPublication = await readFile(
+      path.join(root, "data", originalManifest.publicationPath),
+      "utf8",
+    );
+    const originalSnapshot = await readFile(
+      path.join(root, "data/snapshot.json"),
+      "utf8",
+    );
+    const falseGeneration = "f".repeat(64);
+    const mixed = {
+      ...originalManifest,
+      generation: falseGeneration,
+      snapshotPath: `generations/${falseGeneration}/snapshot.json`,
+      publicationPath: `generations/${falseGeneration}/publication.json`,
+    };
+    await pollPage.route("**/data/feed.json", (route) =>
+      route.fulfill({ json: mixed }),
+    );
+    await pollPage.route(`**/generations/${falseGeneration}/*`, (route) =>
+      route.fulfill({
+        body: route.request().url().endsWith("snapshot.json")
+          ? originalSnapshot
+          : originalPublication + " ",
+        contentType: "application/json",
+      }),
+    );
+    await pollPage.clock.fastForward(61000);
+    await pollPage
+      .getByText("Published generation failed its integrity check.", {
+        exact: false,
+      })
+      .waitFor();
+    await pollPage.getByText("Published snapshot", { exact: true }).waitFor();
+    assert.equal(await pollPage.locator(".asset-table tbody tr").count(), 12);
+    checks.push(
+      "A corrupt update keeps the previous validated generation visible",
+    );
+    await pollContext.close();
+    await context.tracing.stop();
     assert.deepEqual(errors, []);
     assert.deepEqual(misses, []);
     assert.ok(
