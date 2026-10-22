@@ -39,3 +39,7 @@ Next batch: design and test data-branch reservation persistence with local bare 
 Formatting and staged whitespace checks completed. Native Git push succeeded. The branch comparison is https://github.com/woussc/All-Seeing-Eye/compare/main...feat/freshness-controls . No PR or deployed revision is claimed. Main and the daily schedule are unchanged.
 
 Resume from this branch with the local bare-Git reservation fixture design above. Verification commands: `services/market/.venv/bin/pytest -q services/market/tests`, `npm test`, `npm run build`, `npm run build:pages`, and the three `test:pages`, `test:browser`, `test:research-browser` scripts. Browser suites need the corresponding static/local preview running; do not rebuild local output while its Next production server is active. Repeat only checks affected by new edits.
+
+## 22 October reference review
+
+Read-only LangAlpha review at `29baaf16ef348427e646f785e0a156ad8e399343` is saved in `docs/langalpha-comparison.md`. It recommends retaining our cross-asset evidence/metrics core, adding persistent hypotheses and reproducible studies, and considering LangAlpha as an optional later local harness. No installation or application behavior changed. Existing publication/source-verification gates and the immediate ingestion work above remain outstanding. This is a proposal, not approval to add accounts, paid inference or execution.
