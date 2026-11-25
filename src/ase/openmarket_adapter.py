@@ -1,12 +1,17 @@
 """OpenMarket MCP Streamable-HTTP adapter for chart workspace 2op55llf (Option A).
 
-Connects directly from Python using an external Agent Token (stored outside the repo,
-e.g. /etc/ase-secrets/openmarket_token) without requiring an in-chat MCP connector.
+Verified against live OpenMarket MCP v0.497.0:
+- Live 4h candles: `points` (type=TRADE_SIDE_AGNOSTIC_AGG, interval=FOUR_HOURS)
+- Live funding rates: `points` (type=FUNDING_RATE_AGG, interval=FOUR_HOURS; percentage points -> decimal)
+- Live quotes / execution: `market_quote`, `account_balance`, `account_positions`, `order_place`
+  (Note: OpenMarket blocks agent order execution on its built-in Paper account (`reason: venue_off`),
+  so in `mode=paper` All-Seeing-Eye pairs OpenMarket live feeds with local `PaperExchangeAdapter`.)
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -20,25 +25,29 @@ DEFAULT_OPENMARKET_MCP_URL = "https://mcp.openmarket.xyz/"
 
 
 class OpenMarketSymbolMap:
-    """Maps All-Seeing-Eye symbols to OpenMarket EXCHANGE:SYMBOL format."""
+    """Maps All-Seeing-Eye symbols to OpenMarket exchange & rawSymbol pairs."""
+
+    @staticmethod
+    def exchange_for(market_type: MarketType) -> str:
+        return "BINANCE" if market_type == "spot" else "BINANCE_FUTURES"
+
+    @staticmethod
+    def raw_symbol(symbol: str) -> str:
+        return symbol.upper().replace("/", "").replace(":USDT", "")
 
     @staticmethod
     def to_openmarket(symbol: str, market_type: MarketType) -> str:
-        clean = symbol.upper().replace("/", "").replace(":USDT", "")
-        if market_type == "spot":
-            return f"BINANCE:{clean}"
-        return f"BINANCE_FUTURES:{clean}"
+        return f"{OpenMarketSymbolMap.exchange_for(market_type)}:{OpenMarketSymbolMap.raw_symbol(symbol)}"
 
     @staticmethod
     def from_openmarket(raw: str) -> str:
-        sym = raw.split(":")[-1].upper().replace("/", "")
-        return sym
+        return raw.split(":")[-1].upper().replace("/", "")
 
 
 class OpenMarketAdapter:
     """Calls OpenMarket MCP tools over HTTP JSON-RPC 2.0 with idempotency & tab-arm guards."""
 
-    mode = "openmarket_paper"
+    mode = "openmarket_mcp"
 
     def __init__(
         self,
@@ -47,10 +56,10 @@ class OpenMarketAdapter:
         workspace_id: str = "2op55llf",
         mcp_url: str = DEFAULT_OPENMARKET_MCP_URL,
         http_client: httpx.Client | None = None,
-        timeout_sec: float = 15.0,
+        timeout_sec: float = 20.0,
     ) -> None:
         if not token or not token.strip():
-            raise ValueError("OpenMarket Agent Token is required (store outside repo in /etc/ase-secrets/)")
+            raise ValueError("OpenMarket Agent Token is required (store outside repo in external secrets dir)")
         self._token = token.strip()
         self.workspace_id = workspace_id
         self.mcp_url = mcp_url
@@ -58,6 +67,19 @@ class OpenMarketAdapter:
         self._rpc_id = 0
         self._log = logging.getLogger("ase.openmarket")
         self._client = http_client or httpx.Client(timeout=timeout_sec)
+
+    @staticmethod
+    def _parse_response(resp: httpx.Response) -> dict[str, Any]:
+        ct = resp.headers.get("content-type", "")
+        if "text/event-stream" in ct:
+            events = []
+            for line in resp.text.splitlines():
+                if line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if raw:
+                        events.append(json.loads(raw))
+            return events[-1] if events else {}
+        return resp.json()
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._rpc_id += 1
@@ -70,11 +92,11 @@ class OpenMarketAdapter:
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "application/json, text/event-stream",
         }
         resp = self._client.post(self.mcp_url, json=payload, headers=headers, timeout=self.timeout_sec)
         resp.raise_for_status()
-        body = resp.json()
+        body = self._parse_response(resp)
         if "error" in body and body["error"]:
             raise RuntimeError(f"OpenMarket MCP error on {name}: {body['error']}")
         result = body.get("result", body)
@@ -84,15 +106,19 @@ class OpenMarketAdapter:
     def select_workspace(self) -> dict[str, Any]:
         return self._call_tool("chart_workspace_select", {"workspaceId": self.workspace_id})
 
-    def probe_connectivity(self) -> None:
+    def probe_connectivity(self) -> dict[str, Any]:
         self.select_workspace()
-        self._call_tool("chart_status", {})
+        return self._call_tool("chart_status", {})
 
     def server_time_utc(self) -> datetime:
         return datetime.now(timezone.utc)
 
     def get_balance_usdt(self) -> float:
         data = self._call_tool("account_balance", {})
+        if str(data.get("status", "")).lower() == "blocked":
+            raise OrderExecutionError(
+                f"OpenMarket account_balance blocked ({data.get('reason')}): {data.get('message', '')}"
+            )
         for key in ("equity", "total", "balance", "available", "cash"):
             if key in data and data[key] is not None:
                 return float(data[key])
@@ -100,6 +126,10 @@ class OpenMarketAdapter:
 
     def fetch_positions(self) -> dict[str, float]:
         data = self._call_tool("account_positions", {})
+        if str(data.get("status", "")).lower() == "blocked":
+            raise OrderExecutionError(
+                f"OpenMarket account_positions blocked ({data.get('reason')}): {data.get('message', '')}"
+            )
         raw_positions = data.get("positions", data if isinstance(data, list) else [])
         positions: dict[str, float] = {}
         for pos in raw_positions:
@@ -117,17 +147,25 @@ class OpenMarketAdapter:
         market_type: MarketType,
         *,
         as_of_ts: datetime | None = None,
+        lookback: str = "10d",
         limit: int = 45,
     ) -> list[Candle]:
         cutoff = (as_of_ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        om_sym = OpenMarketSymbolMap.to_openmarket(symbol, market_type)
+        exchange = OpenMarketSymbolMap.exchange_for(market_type)
+        raw_sym = OpenMarketSymbolMap.raw_symbol(symbol)
         data = self._call_tool(
             "points",
-            {"symbol": om_sym, "interval": "4h", "limit": limit},
+            {
+                "type": "TRADE_SIDE_AGNOSTIC_AGG",
+                "exchanges": [exchange],
+                "rawSymbol": raw_sym,
+                "interval": "FOUR_HOURS",
+                "lookback": lookback,
+            },
         )
         series = data.get("series", [])
         if not series:
-            raise RuntimeError(f"No 4h candle series returned by OpenMarket for {om_sym}")
+            raise RuntimeError(f"No 4h candle series returned by OpenMarket for {exchange}:{raw_sym}")
         item = series[0]
         cols = item.get("columns", [])
         rows = item.get("rows", [])
@@ -156,7 +194,50 @@ class OpenMarketAdapter:
                 Candle(open_ts=open_ts, close_ts=close_ts, open=o, high=h, low=l, close=c, volume=max(0.0, v))
             )
         candles.sort(key=lambda x: x.close_ts)
-        return candles
+        return candles[-limit:] if limit and len(candles) > limit else candles
+
+    def fetch_latest_funding(
+        self,
+        symbol: str,
+        market_type: MarketType,
+        *,
+        as_of_ts: datetime | None = None,
+    ) -> tuple[float, datetime]:
+        cutoff = (as_of_ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        if market_type != "linear_perps":
+            return 0.0, cutoff
+        raw_sym = OpenMarketSymbolMap.raw_symbol(symbol)
+        data = self._call_tool(
+            "points",
+            {
+                "type": "FUNDING_RATE_AGG",
+                "exchanges": ["BINANCE_FUTURES"],
+                "rawSymbol": raw_sym,
+                "interval": "FOUR_HOURS",
+                "lookback": "3d",
+            },
+        )
+        series = data.get("series", [])
+        if not series:
+            return 0.0, cutoff
+        item = series[0]
+        cols = item.get("columns", [])
+        rows = item.get("rows", [])
+        col_idx = {c: i for i, c in enumerate(cols)}
+        best_rate = 0.0
+        best_ts = cutoff
+        for r in rows:
+            raw_t = r[col_idx["t"]]
+            open_ts = datetime.fromisoformat(str(raw_t).replace("Z", "+00:00")).astimezone(timezone.utc)
+            close_ts = open_ts + timedelta(hours=4)
+            if close_ts > cutoff:
+                continue
+            rc = r[col_idx["rateClose"]]
+            if rc is not None:
+                # OpenMarket FUNDING_RATE_AGG reports percentage points (0.01 == +0.01% == 0.0001 decimal)
+                best_rate = float(rc) / 100.0
+                best_ts = close_ts
+        return best_rate, best_ts
 
     def fetch_orderbook_top(
         self,
@@ -164,21 +245,46 @@ class OpenMarketAdapter:
         market_type: MarketType,
         *,
         fallback_ts: datetime | None = None,
+        fallback_candle: Candle | None = None,
     ) -> OrderBookTop:
-        om_sym = OpenMarketSymbolMap.to_openmarket(symbol, market_type)
-        data = self._call_tool("market_quote", {"symbol": om_sym})
-        bid = float(data.get("bid") or data.get("last") or data.get("price"))
-        ask = float(data.get("ask") or bid)
-        if ask < bid:
-            ask = bid
-        bid_qty = float(data.get("bid_qty") or data.get("bidSize") or 100.0)
-        ask_qty = float(data.get("ask_qty") or data.get("askSize") or 100.0)
-        raw_ts = data.get("ts")
-        if raw_ts:
-            ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).astimezone(timezone.utc)
-        else:
-            ts = (fallback_ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        return OrderBookTop(ts=ts, bid=bid, ask=ask, bid_qty=bid_qty, ask_qty=ask_qty)
+        raw_sym = OpenMarketSymbolMap.raw_symbol(symbol)
+        ts_now = (fallback_ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        try:
+            data = self._call_tool("market_quote", {"venue": "binance", "asset": raw_sym})
+            if str(data.get("status", "")).lower() != "blocked" and (
+                data.get("bid") or data.get("last") or data.get("price")
+            ):
+                bid = float(data.get("bid") or data.get("last") or data.get("price"))
+                ask = float(data.get("ask") or bid)
+                if ask < bid:
+                    ask = bid
+                bid_qty = float(data.get("bid_qty") or data.get("bidSize") or 100.0)
+                ask_qty = float(data.get("ask_qty") or data.get("askSize") or 100.0)
+                raw_ts = data.get("ts")
+                ts = (
+                    datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).astimezone(timezone.utc)
+                    if raw_ts
+                    else ts_now
+                )
+                return OrderBookTop(ts=ts, bid=bid, ask=ask, bid_qty=bid_qty, ask_qty=ask_qty)
+        except Exception as exc:
+            self._log.debug("market_quote unavailable for %s (%s); using causal bar proxy", raw_sym, exc)
+
+        if fallback_candle is None:
+            raise RuntimeError(f"OpenMarket market_quote unavailable for {raw_sym} and no fallback_candle supplied")
+        half_spd = 0.0003 if raw_sym not in {"BTCUSDT", "ETHUSDT"} else 0.0001
+        body_ratio = (fallback_candle.close - fallback_candle.open) / max(
+            fallback_candle.high - fallback_candle.low, 1e-9
+        )
+        bid_qty = max(1.0, 100.0 * (1.0 + max(-0.8, min(0.8, body_ratio))))
+        ask_qty = max(1.0, 100.0 * (1.0 - max(-0.8, min(0.8, body_ratio))))
+        return OrderBookTop(
+            ts=fallback_candle.close_ts,
+            bid=fallback_candle.close * (1.0 - half_spd),
+            ask=fallback_candle.close * (1.0 + half_spd),
+            bid_qty=bid_qty,
+            ask_qty=ask_qty,
+        )
 
     @staticmethod
     def _idempotency_key(req: OrderRequest) -> str:
@@ -206,11 +312,10 @@ class OpenMarketAdapter:
         status = str(data.get("status", "error")).lower()
         reason = str(data.get("reason") or status)
 
-        if status in ("rejected", "blocked", "no_arm", "no_tab", "expired", "relay_unavailable"):
+        if status in ("rejected", "blocked", "no_arm", "no_tab", "expired", "relay_unavailable", "venue_off"):
             raise OrderExecutionError(f"OpenMarket order {status} ({reason}) for {om_sym}")
 
         if status in ("relay_uncertain", "error"):
-            # Inspect account_orders before surfacing uncertainty
             try:
                 orders_data = self._call_tool("account_orders", {"idempotency_key": idem_key})
                 self._log.warning("Checked account_orders after %s: %s", status, orders_data)

@@ -176,12 +176,14 @@ def test_trading_engine_poll_once_runs_cycle_with_openmarket_feed(tmp_path) -> N
     ]
 
     responses = [
-        # BTCUSDT points
-        {"structuredContent": {"data": {"series": [{"id": {"interval": "4h"}, "columns": ["t", "open", "high", "low", "close", "volume"], "rows": rows}]}}},
-        # HYPEUSDT points
-        {"structuredContent": {"data": {"series": [{"id": {"interval": "4h"}, "columns": ["t", "open", "high", "low", "close", "volume"], "rows": rows}]}}},
-        # HYPEUSDT market_quote
-        {"structuredContent": {"data": {"bid": 65.2, "ask": 65.25, "bid_qty": 200.0, "ask_qty": 100.0, "ts": now.isoformat()}}},
+        # BTCUSDT points (OHLCV)
+        {"structuredContent": {"data": {"series": [{"id": {"interval": "FOUR_HOURS"}, "columns": ["t", "open", "high", "low", "close", "volume"], "rows": rows}]}}},
+        # HYPEUSDT points (OHLCV)
+        {"structuredContent": {"data": {"series": [{"id": {"interval": "FOUR_HOURS"}, "columns": ["t", "open", "high", "low", "close", "volume"], "rows": rows}]}}},
+        # HYPEUSDT market_quote -> blocked (venue_off) -> falls back to causal bar proxy
+        {"structuredContent": {"data": {"status": "blocked", "reason": "venue_off"}}},
+        # HYPEUSDT funding (0.01% -> 0.0001 decimal)
+        {"structuredContent": {"data": {"series": [{"columns": ["t", "rateClose"], "rows": [[(start + timedelta(hours=4 * 24)).isoformat(), 0.01]]}]}}},
     ]
     client = httpx.Client(transport=_mock_transport(responses))
     om = OpenMarketAdapter(token="test-om-token-123456", workspace_id="2op55llf", http_client=client)

@@ -166,13 +166,25 @@ class TradingEngine:
             )
             try:
                 om.probe_connectivity()
-                self.exchange = om
                 self.market_data_source = om
-                self.exchange_info = {
-                    "mode": f"openmarket:{cfg.openmarket.workspace_id}",
-                    "fallback_used": False,
-                    "missing_piece": None,
-                }
+                if cfg.system.mode == "paper":
+                    # OpenMarket blocks agent execution on its built-in Paper account (reason: venue_off);
+                    # pair OpenMarket live feeds with local PaperExchangeAdapter ($10k ledger).
+                    self.exchange, _ = create_exchange_adapter(
+                        cfg, api_key=binance_key, api_secret=binance_secret
+                    )
+                    self.exchange_info = {
+                        "mode": f"paper+openmarket_feed:{cfg.openmarket.workspace_id}",
+                        "fallback_used": False,
+                        "missing_piece": "OpenMarket tab paper account is unavailable to agents; using local PaperExchangeAdapter with live OpenMarket feeds",
+                    }
+                else:
+                    self.exchange = om
+                    self.exchange_info = {
+                        "mode": f"openmarket:{cfg.openmarket.workspace_id}",
+                        "fallback_used": False,
+                        "missing_piece": None,
+                    }
             except Exception as exc:
                 self._log.warning("OpenMarket unreachable (%s); falling back to PaperExchangeAdapter", exc)
                 self.exchange, self.exchange_info = create_exchange_adapter(
@@ -428,20 +440,38 @@ class TradingEngine:
         for fin in self.finalists:
             try:
                 bars = source.fetch_4h_candles(fin.symbol, fin.market_type, as_of_ts=as_of_ts, limit=45)
-                ob = source.fetch_orderbook_top(fin.symbol, fin.market_type, fallback_ts=utc_now)
+                if not bars:
+                    continue
+                ob = source.fetch_orderbook_top(
+                    fin.symbol,
+                    fin.market_type,
+                    fallback_ts=utc_now,
+                    fallback_candle=bars[-1],
+                )
                 candles_by_symbol[fin.symbol] = bars
                 orderbooks_by_symbol[fin.symbol] = ob
-                funding_by_symbol[fin.symbol] = (0.0, as_of_ts)
+                if hasattr(source, "fetch_latest_funding"):
+                    funding_by_symbol[fin.symbol] = source.fetch_latest_funding(
+                        fin.symbol, fin.market_type, as_of_ts=as_of_ts
+                    )
+                else:
+                    funding_by_symbol[fin.symbol] = (0.0, as_of_ts)
             except Exception as exc:
                 self._log.warning("Market feed fetch failed for %s: %s", fin.symbol, exc)
 
+        clock_now = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+        exch_now = (
+            source.server_time_utc()
+            if now is None
+            else clock_now
+        )
         return self.run_candle_cycle(
             as_of_ts=as_of_ts,
             candles_by_symbol=candles_by_symbol,
             orderbooks_by_symbol=orderbooks_by_symbol,
             funding_by_symbol=funding_by_symbol,
-            local_now_ts=utc_now,
-            exchange_server_ts=source.server_time_utc(),
+            local_now_ts=clock_now,
+            exchange_server_ts=exch_now,
         )
 
     def serve_forever(self, *, poll_interval_sec: int = 300) -> None:
