@@ -1,24 +1,28 @@
-node_modules/
-.next/
-*.tsbuildinfo
-.env*
-!.env.example
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Secrets & credentials — NEVER commit keys into the repo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Runtime state, databases, logs, downloaded market data cache
 .runtime/
-apps/pages/
-# Local conversation/checkpoint material is not part of the published project.
-docs/original-monitor-task.txt
-docs/public-api-monitor-task.md
-docs/execution-state.md
-docs/visual-review.md
-.taste-skill/
-.taste-skill/inspect/
-.taste-skill/inspect-round-*/
-.taste-skill/final-inspect/
-.taste-skill/research-inspect*/
-test-results/
+data/cache/
+data/raw/
+data/clean/
 *.db
 *.db-wal
 *.db-shm
+*.log

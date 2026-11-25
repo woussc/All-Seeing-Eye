@@ -1,58 +1,46 @@
-# SHUAI's Market Rotation Monitor
+# All-Seeing-Eye
 
-A research dashboard for SPY, QQQ, IWM, RSP, IEF, TLT, LQD, HYG, GLD, BTC, ETH and SGOV. It provides price context, completed-bar technical evidence, Treasury rates, source timestamps and downloadable reports.
+24/7 two-layer (**BRAIN + REFLEX**) crypto trading system built around strict code-owned risk limits, causal state snapshots (`<400` tokens), `ccxt` Binance testnet-first execution (spot + linear USDT perpetuals, with paper fallback), post-March-2026 walk-forward validation, and nightly Brier-score calibration review.
 
-**$0 design:** no market-data accounts, paid inference or broker connection. GitHub Pages serves the browser version; a public-repository GitHub Actions job collects public JSON/XML daily. The workflow refuses to run in private repositories. See [deployment and operation](docs/github-pages.md).
+> **Start in paper trading.** Live orders, moving funds, provisioning trading keys, and production deploys are blocked by an explicit code-level approval gate until owner sign-off.
 
-## GitHub Pages version
+## Core Documents (Read `AGENTS.md` and `PROGRESS.md` First Every Session)
+- [Project Rules (`AGENTS.md`)](AGENTS.md)
+- [Decision & Progress Log (`PROGRESS.md`)](PROGRESS.md)
+- [Technical Specification (`docs/SPEC.md`)](docs/SPEC.md)
+- [Test-First Implementation Plan (`docs/PLAN.md`)](docs/PLAN.md)
+- [Dated Market Regime & 7-Finalist Research (`docs/RESEARCH_2026-11-24.md`)](docs/RESEARCH_2026-11-24.md)
+- [24/7 Operations Runbook (`docs/RUNBOOK.md`)](docs/RUNBOOK.md)
 
-The five screens are Overview, Fund flows, Research, Journal and Sources. The website is static HTML, JavaScript and dated JSON, with no always-on Python server.
+## Quickstart
+```bash
+# Install dependencies (Python 3.12 + uv)
+uv sync --dev
 
-- Common close defaults to the last completed NYSE session, respecting holidays and early closes. Newer crypto observations use a separate clock.
-- Technical evidence includes EMA slopes, confirmed pivots, four/thirteen-week returns and ATR/close. Stale or incomplete evidence keeps trends unclear.
-- Refresh checks for a newer **published snapshot**. It cannot contact providers or trigger a GitHub job.
-- The publisher runs around **08:17 Singapore time** daily. GitHub can delay or skip runs. Publications older than 36 hours are marked overdue and analytical watches are suppressed.
-- Journal retains up to 30 captures while the publisher cache survives. Browser-local snapshots and JSON/Markdown downloads provide separate copies.
-- Automatic measured fund flows remain unconnected. Flow uploads and server-side acknowledgments are available only in the local application.
+# Run full unit & integration test suite
+uv run pytest -v
 
-Public Yahoo Finance, Coinbase Exchange and US Treasury observations can be delayed, unavailable or revised. Failed sources retain cached observations marked stale, or unavailable values without cache. Explicit `?demo=1` mode contains synthetic data and is never an outage fallback.
+# Validate live approval gate (passes in paper mode; blocks unapproved live mode)
+uv run ase validate-gate --config config/system.yaml
 
-## Build the static site
+# Run post-March-2026 walk-forward backtest on official Binance archives
+uv run ase backtest --config config/system.yaml --finalists config/finalists.yaml
 
-Requirements: Node.js 24, Python 3.12 and uv. From the repository root:
+# Run nightly Brier calibration review
+uv run ase nightly --config config/system.yaml
 
-```sh
-npm ci --no-audit --no-fund
-uv sync --project services/market --frozen
-uv run --project services/market --frozen python services/market/export_pages.py
-npm run build:pages
+# Launch 24/7 Docker Compose stack (paper mode default; survives reboots)
+docker compose up -d --build
+curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-The result is `apps/pages/out`. Generated source at `apps/pages` excludes server API routes and is ignored by Git. `PAGES_BASE_PATH` defaults to `/All-Seeing-Eye`; use the repository path, or an empty string for an account-root site. `PAGES_DATA_DIR` can select another validated publication directory.
-
-Only `apps/pages/out` is uploaded. The site excludes the local application's database, flow imports, credentials, conversation instructions and checkpoint notes.
-
-## Local application
-
-The original Next.js/FastAPI application remains available:
-
-```sh
-npm run build
-bash scripts/start-local.sh
-```
-
-The launcher starts the web application on port 3000 and the loopback API on port 8000. Logs are in `.runtime`. Server-side archives, optional daily capture and validated flow imports are described in [research operations](docs/research-operations.md).
-
-## Validation
-
-```sh
-npm test
-npm run typecheck
-uv run --project services/market --frozen pytest -q services/market/tests
-npm run build:pages
-npm run test:pages
-```
-
-The Pages browser check uses a temporary plain static HTTP server under the repository subpath, without an application backend. Set `CHROME_PATH` to a working Chromium executable outside the development workspace. The local application's browser scripts remain `npm run test:browser` and `npm run test:research-browser` and require running services.
-
-See [data semantics](docs/data-contract.md), [technical definitions](docs/technical-evidence.md) and [Treasury sources](docs/macro-sources.md). This is a research monitor; no backtesting engine, trade execution, QuantGPT or Jev connection is included. DXY, HY spreads, positioning, release calendars and automatic fund flows remain unconnected.
+## Non-Negotiable Code-Owned Risk Limits
+- `1%` max risk per trade (inclusive of fees + modeled slippage)
+- `5%` max daily loss (UTC)
+- `3` max concurrent open positions
+- `2x` max gross leverage (shorts routed via linear USDT perpetuals only)
+- `15%` peak-to-trough drawdown permanent kill switch (manual reset only)
+- Entry gates: `setup_quality >= 2`, `confidence > 0.80`, `risk_state == "safe"`, `regime != "crisis"`
+- Pause new risk + Telegram alert on `confidence < 0.60` or `regime == "crisis"`
+- Fixed minimum size for first `200` decisions, then `<= 0.25x` Kelly **only while** rolling Brier score beats baseline
+- Hard `$5.00/day` UTC model budget cap; missed or over-budget candles are skipped cleanly

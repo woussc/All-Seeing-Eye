@@ -1,0 +1,55 @@
+# 24/7 Runtime surviving reboots with restart policies, health checks, and read-only external secrets.
+# Store API keys and Telegram tokens OUTSIDE the repo at ${ASE_SECRETS_DIR:-/etc/ase-secrets}.
+
+services:
+  trading-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ase-trading-engine
+    restart: unless-stopped
+    environment:
+      ASE_MODE: ${ASE_MODE:-paper}
+      ASE_SECRETS_DIR: /run/secrets
+      ASE_LIVE_APPROVED: ${ASE_LIVE_APPROVED:-false}
+      ASE_LIVE_APPROVAL_TOKEN: ${ASE_LIVE_APPROVAL_TOKEN:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ase_runtime:/app/.runtime
+      - ./config:/app/config:ro
+      - ${ASE_SECRETS_DIR:-/etc/ase-secrets}:/run/secrets:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  nightly-review:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ase-nightly-review
+    restart: unless-stopped
+    depends_on:
+      trading-engine:
+        condition: service_healthy
+    environment:
+      ASE_SECRETS_DIR: /run/secrets
+    volumes:
+      - ase_runtime:/app/.runtime
+      - ./config:/app/config:ro
+      - ${ASE_SECRETS_DIR:-/etc/ase-secrets}:/run/secrets:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "while true; do uv run --no-dev ase nightly --config config/system.yaml --db /app/.runtime/ase.db; sleep 86400; done"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/.runtime/ase.db"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  ase_runtime:

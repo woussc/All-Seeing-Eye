@@ -1,0 +1,202 @@
+# Compiled Finalist Setups — Dated 2026-11-24 UTC
+# Every finalist passes off-limits filters (mcap >= $200M, 24h vol >= $20M, non-meme, non-leveraged).
+# REFLEX outputs typed ReflexDecision per candle; CODE enforces all thresholds and risk caps.
+
+as_of_utc: "2026-11-24T11:35:00Z"
+macro_regime_snapshot:
+  btc_price_usd: 59777.0
+  btc_30d_return_pct: -25.69
+  eth_price_usd: 1685.1
+  eth_30d_return_pct: -27.77
+  btc_dominance_pct: 58.54
+  eth_dominance_pct: 10.03
+  stablecoin_total_usd_b: 283.94
+  stablecoin_30d_change_usd_b: -17.43
+  fed_funds_range: "3.75%-4.00%"
+  regime_label: "high_vol"
+
+finalists:
+  - id: HYPE_VALUE_ACCRUAL
+    symbol: HYPEUSDT
+    asset: HYPE
+    market_type: linear_perps
+    allowed_directions: [long, neutral]
+    preferred_direction: long
+    stop_loss_pct: 0.06
+    take_profit_pct: 0.14
+    max_hold_candles: 18
+    market_cap_usd: 14890000000
+    volume_24h_usd: 1220200000
+    circulating_float_pct: 25.0
+    thesis: >
+      Category-leading on-chain perp venue ($75.53M 30d revenue, +10.39% 7d; $98.54M 30d fees; 49% of on-chain perp DEX volume)
+      with direct 100% programmatic buyback/burn via Assistance Fund ($75.9M/30d). Outperformed BTC by +8.4% over 30d despite broad selloff.
+    bear_case: >
+      Only 25.0% circulating float ($59.5B FDV vs $14.9B mcap, 65.7x FDV/Rev) with 9.9M HYPE ($637.6M) Core Contributor unlock
+      scheduled in December 2026. Although Nov 6 claim rate was 1.82%, any surge in contributor claims or volume drop in a bear market compresses multiples sharply.
+    invalidation: >
+      30d protocol revenue drops below $45M, Core Contributor claim rate exceeds 35% of unlocked tranche, or daily close below 30d structural support with rising negative funding.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: AAVE_REVENUE_DISCONNECT
+    symbol: AAVEUSDT
+    asset: AAVE
+    market_type: spot
+    allowed_directions: [long, neutral]
+    preferred_direction: long
+    stop_loss_pct: 0.055
+    take_profit_pct: 0.13
+    max_hold_candles: 18
+    market_cap_usd: 1460000000
+    volume_24h_usd: 242900000
+    circulating_float_pct: 96.5
+    thesis: >
+      Price fell -30.4% in 30d while Aave V3+V4 generated $44.69M 30d fees and $6.28M 30d revenue (+21.27% 7d) with 96.5% circulating float
+      (minimal unlock overhang) and active DAO buybacks (~$30M/yr). Aave V4 Equities Hub captured 56% ($17.1M) of tokenized stock DeFi deposits within 2 months of launch.
+    bear_case: >
+      Recent revenue spike is partly liquidation-driven during Nov volatility and may mean-revert lower as borrow demand contracts alongside -$17.4B 30d stablecoin outflows.
+      Weekend equity-gap oracle risk on tokenized stock collateral could create bad debt.
+    invalidation: >
+      Aave V3+V4 30d revenue falls below $3.5M, protocol bad debt exceeds $5M, or stablecoin TVL contracts >20% month-over-month.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: UNI_FEESWITCH_BURN
+    symbol: UNIUSDT
+    asset: UNI
+    market_type: spot
+    allowed_directions: [long, neutral]
+    preferred_direction: long
+    stop_loss_pct: 0.055
+    take_profit_pct: 0.12
+    max_hold_candles: 18
+    market_cap_usd: 2870000000
+    volume_24h_usd: 388800000
+    circulating_float_pct: 68.6
+    thesis: >
+      Active UNIfication fee switch (100M UNI treasury burned; 17% swap fees + Unichain sequencer fees routed to UNI buyback/burn, extended to v4 via Proposal 100 in July 2026)
+      generating $67.37M combined V3+V4 30d fees and $8.24M V3 30d revenue while UNI sold off -29.2% in 30d.
+    bear_case: >
+      V3 fees fell -18.7% 7d as risk-off liquidity shrank; fee-switch take-rate risks LP attrition toward zero-protocol-fee pools or Base/Solana DEX competitors.
+    invalidation: >
+      Combined V3+V4 DEX volume share drops >10 percentage points over 30d or weekly protocol burn revenue falls below $1.0M.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: SKY_DEEP_VALUE_CONDITIONAL
+    symbol: SKYUSDT
+    asset: SKY
+    market_type: linear_perps
+    allowed_directions: [long, short, neutral]
+    preferred_direction: neutral
+    stop_loss_pct: 0.06
+    take_profit_pct: 0.13
+    max_hold_candles: 15
+    market_cap_usd: 870000000
+    volume_24h_usd: 46900000
+    circulating_float_pct: 99.5
+    thesis: >
+      Trades at ~5.3x annualized revenue ($13.67M 30d Sky Lending revenue on $870M mcap, 99.5% float) after a -44.3% 30d selloff.
+      Asymmetric mean-reversion long ONLY once USDS outflows stabilize; otherwise bearish drift while stablecoin float contracts.
+    bear_case: >
+      USDS circulating supply plunged -$3.56B in 30d (down to $3.16B, >50% contraction), eroding future RWA/lending net interest margin,
+      and governance retained $28.47M of $37.19M Q3 net revenue in reserves instead of distributing to SKY holders.
+    invalidation: >
+      For long: USDS supply continues shrinking >5%/week or falls below $2.5B. For short: USDS supply prints 2 consecutive weeks of net inflows or governance increases token buyback payout >50%.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: ENA_BASIS_FUNDING_SQUEEZE
+    symbol: ENAUSDT
+    asset: ENA
+    market_type: linear_perps
+    allowed_directions: [short, long, neutral]
+    preferred_direction: short
+    stop_loss_pct: 0.06
+    take_profit_pct: 0.14
+    max_hold_candles: 15
+    market_cap_usd: 1330000000
+    volume_24h_usd: 283400000
+    circulating_float_pct: 90.0
+    thesis: >
+      Negative BTC/ETH perp funding since Nov 13 crushed Ethena 24h fees to $21k (vs $18.17M 30d) while the approved 95% fee switch
+      requires USDe >$7.5B (currently $4.88B, 54% below trigger). Tactical short while funding stays negative; flips long only if BTC funding sustains positive and USDe expands toward $7.5B.
+    bear_case: >
+      Already down -48.2% in 30d with USDe supply bucking the market (+$280M in 30d); sharp BTC short squeeze flipping perp funding strongly positive would rapidly re-rate ENA higher.
+    invalidation: >
+      For short: 7d average BTC/ETH Binance perp funding turns >+0.01%/8h AND daily Ethena fees recover above $1.0M/day.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: ARB_UNLOCK_NO_ACCRUAL_SHORT
+    symbol: ARBUSDT
+    asset: ARB
+    market_type: linear_perps
+    allowed_directions: [short, neutral]
+    preferred_direction: short
+    stop_loss_pct: 0.055
+    take_profit_pct: 0.13
+    max_hold_candles: 18
+    market_cap_usd: 790000000
+    volume_24h_usd: 117300000
+    circulating_float_pct: 70.0
+    thesis: >
+      Severe fundamental disconnect: $790M mcap ($1.13B FDV) vs only $0.51M 30d protocol revenue (~130x P/Rev mcap) with ZERO direct fee accrual to ARB holders,
+      lagging fee growth despite address spikes, and persistent monthly cliff unlocks (~92.6M-139M ARB in Nov 2026; unlocks run through March 2027) plus 2.84B ARB DAO treasury overhang.
+    bear_case: >
+      Already down -31.1% in 30d; crowded short positioning or a surprise ArbitrumDAO fee-switch/staking-yield vote could trigger a violent short squeeze.
+    invalidation: >
+      ArbitrumDAO passes binding direct ARB fee-sharing/buyback governance OR ETH/BTC reverses into sustained uptrend with ARB reclaiming 20-day EMA on expanding volume.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
+
+  - id: SUI_LOW_FLOAT_DILUTION_SHORT
+    symbol: SUIUSDT
+    asset: SUI
+    market_type: linear_perps
+    allowed_directions: [short, neutral]
+    preferred_direction: short
+    stop_loss_pct: 0.06
+    take_profit_pct: 0.14
+    max_hold_candles: 18
+    market_cap_usd: 2710000000
+    volume_24h_usd: 427600000
+    circulating_float_pct: 41.4
+    thesis: >
+      High valuation ($2.71B mcap, $6.55B FDV) paired with low 41.4% circulating float, minimal on-chain fee/revenue generation ($0.25M Foundation + $0.38M Suilend 30d),
+      and recurring monthly cliff unlocks (13M-21.9M SUI unlocking Dec 1-3, 2026) into a contracting -$17.4B stablecoin liquidity regime.
+    bear_case: >
+      Low circulating float can fuel reflexive short squeezes on modest spot inflows if macro/Fed expectations pivot dovish or BTC reclaims $68k+.
+    invalidation: >
+      Daily chain fees exceed $500k sustained for 14d, stablecoin supply turns positive 30d, or SUI closes above 30d high with positive funding.
+    schema_template:
+      regime: [trending, mean_reverting, high_vol, crisis]
+      direction: [long, short, neutral]
+      setup_quality_range: [0, 3]
+      risk_state: [safe, near_limit, reduce]
+      entry_gate: "setup_quality >= 2 and confidence > 0.80 and risk_state == 'safe' and regime != 'crisis'"
